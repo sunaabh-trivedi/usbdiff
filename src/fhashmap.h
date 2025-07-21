@@ -2,7 +2,7 @@
 #define FHASHMAP_H
 
 // Hash map of filename to file hash
-#define HMAP_MAX_ELEMS 256
+#define HMAP_MAX_ELEMS 4096
 
 struct fhash_entry  {
     char *filename;
@@ -18,7 +18,7 @@ typedef struct
 
 } fhashmap_t;
 
-void fhashmap_add(fhashmap_t* map, char* filename, char *filehash);
+void fhashmap_add(fhashmap_t* map, const char *const filename, const char *const filehash);
 char* fhashmap_lookup(fhashmap_t* map, char* filename);
 void fhashmap_print(fhashmap_t *map);
 

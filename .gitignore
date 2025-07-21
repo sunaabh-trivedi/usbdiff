@@ -1,0 +1,5 @@
+.vscode/
+dummy/
+*.o
+*.exe
+*.json

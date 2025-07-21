@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -Wall -O2
+CFLAGS = -Wall -pg -O0
 
 TARGET = usbdiff.exe
 

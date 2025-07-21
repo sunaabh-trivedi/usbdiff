@@ -3,7 +3,7 @@
 #include <string.h>
 #include <stdio.h>
 
-static unsigned int hash_string(char* str) 
+static unsigned int hash_string(const char* str) 
 {
     unsigned long hash = 5381;
     int c;
@@ -13,14 +13,18 @@ static unsigned int hash_string(char* str)
 }
 
 
-void fhashmap_add(fhashmap_t *map, char *filename, char *filehash)   
+void fhashmap_add(fhashmap_t *map, const char *const filename, const char *const filehash)   
 {
     unsigned int hash = hash_string(filename);
     
     fhashentry_t *entry = map->farray[hash];
     if(entry == NULL)   {
         entry = malloc(sizeof(fhashentry_t));
-        if(!entry) return;
+        if(!entry) 
+        {   
+            fprintf(stderr, "Failed to add %s to hashmap\n", filename);
+            return;
+        }
 
         entry->filename = filename;
         entry->filehash = filehash;
@@ -30,14 +34,20 @@ void fhashmap_add(fhashmap_t *map, char *filename, char *filehash)
     }
     else    {
         fhashentry_t *curr = entry;
-        while(curr != NULL) curr = curr->next;
+        while(curr->next) curr = curr->next;
 
-        curr = malloc(sizeof(fhashentry_t)); 
-        if(!curr) return;
+        fhashentry_t *new = malloc(sizeof(fhashentry_t)); 
+        if(!new)
+        {   
+            fprintf(stderr, "Failed to add %s to hashmap\n", filename);
+            return;
+        }
 
-        curr->filename = filename;
-        curr->filehash = filehash;
-        curr->next = NULL;
+        new->filename = filename;
+        new->filehash = filehash;
+        new->next = NULL;
+
+        curr->next = new;
     }
 }
 
