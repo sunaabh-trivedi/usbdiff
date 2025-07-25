@@ -10,6 +10,30 @@
 fhashmap_t curr_fhashmap;
 fhashmap_t prev_fhashmap;
 
+int list_add(filelist_t *list, char *path) 
+{
+    if (list->len < MAX_FILES) {
+        strncpy(list->filenames[list->len],
+                (path), MAX_PATH - 1);
+        list->filenames[list->len][MAX_PATH-1] = '\0';
+        list->len++;
+    } else {
+        fprintf(stderr, "filelist_add: MAX_FILES reached\n");
+        return 1;
+    }
+
+    return 0;
+}
+
+void list_print(filelist_t *list)
+{   
+    printf("List: \n");
+    for(int i = 0; i < list->len; i++)  {
+        printf("%s\n", list->filenames[i]);
+    }
+    printf("-------------------\n");
+}
+
 static inline char *get_hex_string(char hash[32])  {
 
     char *hex = malloc(65);
@@ -49,18 +73,14 @@ char *compute_sha256(char full_path[MAX_PATH])
     return hex;
 }
 
-void load_files(const char* dir, fhashmap_t* map) 
+void collect_files_list(const char *dir, filelist_t *list) 
 {
     char search_path[MAX_PATH];
-    snprintf(search_path, sizeof(search_path), "%s\\*.*", dir);
+    snprintf(search_path, MAX_PATH, "%s\\*", dir);
 
     WIN32_FIND_DATAA findData;
     HANDLE hFind = FindFirstFileA(search_path, &findData);
-
-    if (hFind == INVALID_HANDLE_VALUE) {
-        fprintf(stderr, "Failed to open directory: %s\n", dir);
-        return;
-    }
+    if (hFind == INVALID_HANDLE_VALUE) return;
 
     do {
         if (strcmp(findData.cFileName, ".") == 0 || strcmp(findData.cFileName, "..") == 0)
@@ -69,38 +89,40 @@ void load_files(const char* dir, fhashmap_t* map)
         char full_path[MAX_PATH];
         snprintf(full_path, sizeof(full_path), "%s\\%s", dir, findData.cFileName);
 
-        #if DEBUG
-        printf("Scanning file: %s\n", full_path);
-        #endif
-
         if (findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-            // Recurse into subdirectory
-            load_files(full_path, map);
+            collect_files_list(full_path, list);
         } else {
-            char* hash = compute_sha256(full_path);
-            if (!hash) {
-                fprintf(stderr, "Failed to compute SHA256 hash for file %s\n", full_path);
-                continue;
-            }
-
-            char* key = _strdup(full_path);
-            char* value = _strdup(hash);
-            free(hash);
-
-            if (key && value) {
-                fhashmap_add(map, key, value);
-            } else {
-                fprintf(stderr, "Failed to allocate memory for key/value\n");
-            }
+            list_add(list, _strdup(full_path));
         }
     } while (FindNextFileA(hFind, &findData));
 
     FindClose(hFind);
 }
 
-filediff_t* map_diff(fhashmap_t *curr_map, fhashmap_t *prev_map)
+int load_files(const filelist_t *const list, fhashmap_t *map)
+{   
+    if(!list || !map) return 1;
+    
+    #pragma omp parallel for schedule(dynamic, 8)
+    for(int i = 0; i < list->len; i++)  {
+        char *filename = list->filenames[i];
+        char *hash = compute_sha256(filename);
+        if(!hash) {
+            fprintf(stderr, "Couldn't hash %s, skipping\n", filename);
+            continue;
+        }
+        
+        #pragma omp critical
+        fhashmap_add(map, filename, _strdup(hash));
+
+        free(hash);
+    }
+
+    return 0;
+}
+
+size_t map_diff(filediff_t *diff, fhashmap_t *curr_map, fhashmap_t *prev_map)
 {
-    filediff_t *diff = malloc(sizeof(filediff_t) * MAX_DIFFS);
     int diff_count = 0;
 
     for(int i = 0; i < HMAP_MAX_ELEMS; i++) {
@@ -132,7 +154,6 @@ filediff_t* map_diff(fhashmap_t *curr_map, fhashmap_t *prev_map)
             prev_map_entry = prev_map_entry->next;
         }
 
-
         // New files created
         fhashentry_t *curr_map_entry = curr_map->farray[i];
         while(curr_map_entry)    {
@@ -157,6 +178,11 @@ filediff_t* map_diff(fhashmap_t *curr_map, fhashmap_t *prev_map)
         return NULL;
     }
     
+    return diff_count;
+}
+
+void print_diff(filediff_t *diff, size_t diff_count)   
+{
     HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
     printf("Diffs: \n");
     for(int i = 0; i < diff_count; i++) {
@@ -170,23 +196,24 @@ filediff_t* map_diff(fhashmap_t *curr_map, fhashmap_t *prev_map)
         printf("%s\n", diff[i].filename);
 
         SetConsoleTextAttribute(hConsole, info.wAttributes);
-
     }
-    return diff;
 }
 
 int main(int argc, char **argv)
 {   
-
     if(argc != 2)    {
         printf("Usage: ./usbdiff <directory>\n");
         return 1;
     }
-
+    
     char *directory = argv[1];
-
+    
+    filelist_t list;
+    list.len = 0;
+    
     // Load snapshot of current directory into hashmap
-    load_files((const char *) directory, &curr_fhashmap);
+    collect_files_list((const char *) directory, &list);
+    load_files(&list, &curr_fhashmap);
 
     #if DEBUG
     printf("Current Hashmap: \n");
@@ -204,10 +231,13 @@ int main(int argc, char **argv)
     #endif
 
     // Compare prev and curr hashmaps
-    filediff_t *diffs = map_diff(&curr_fhashmap, &prev_fhashmap);
+    filediff_t *diffs = malloc(sizeof(filediff_t)*MAX_DIFFS);
     if(!diffs)  {
         return 0;
     }
+
+    size_t diff_count = map_diff(diffs, &curr_fhashmap, &prev_fhashmap);
+    print_diff(diffs, diff_count);
 
     free(diffs);
 
