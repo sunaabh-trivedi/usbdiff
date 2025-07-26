@@ -1,7 +1,7 @@
 CC = gcc
-CFLAGS = -Wall -pg -O0
+CFLAGS = -Wall -O0 -pg -fopenmp
 
-TARGET = usbdiff.exe
+TARGET = usbdiff
 
 SRC_DIR = src
 SRCS = $(wildcard $(SRC_DIR)/*.c)
@@ -13,4 +13,4 @@ $(TARGET): $(SRCS)
 	$(CC) $(CFLAGS) $(SRCS) -o $(TARGET)
 
 clean:
-	del /Q $(TARGET) $(SRC_DIR)\*.o 2>nul
+	rm -f $(TARGET) $(SRC_DIR)/*.o

@@ -1,7 +1,19 @@
 #ifndef USBDIFF_H
 #define USBDIFF_H
 
+
+#ifdef _WIN32
 #include <windows.h>
+#else
+#include <dirent.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#define MAX_PATH 1024
+#define FOREGROUND_RED   "\033[31m"
+#define FOREGROUND_GREEN "\033[32m"
+#define RESET_COLOR      "\033[0m"
+#define _strdup strdup
+#endif
 
 #define MAX_DIFFS 1024
 #define MAX_FILES 5192

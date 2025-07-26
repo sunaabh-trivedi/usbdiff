@@ -7,6 +7,8 @@
 struct fhash_entry  {
     char *filename;
     char *filehash;
+    size_t file_size;
+    time_t mtime;
     struct fhash_entry *next; // Chaining
 };
 
@@ -21,5 +23,6 @@ typedef struct
 void fhashmap_add(fhashmap_t* map, const char *const filename, const char *const filehash);
 char* fhashmap_lookup(fhashmap_t* map, char* filename);
 void fhashmap_print(fhashmap_t *map);
+void fhashmap_init(fhashmap_t *map);
 
 #endif

@@ -8,6 +8,7 @@ cJSON* create_json(fhashmap_t *map)
     cJSON *files = cJSON_CreateObject();
     if(!files) return NULL;
 
+    // TODO: Add metadata to JSON object
     for(int i = 0; i < HMAP_MAX_ELEMS; i++) {
 
         fhashentry_t *curr = map->farray[i];

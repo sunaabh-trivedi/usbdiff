@@ -12,9 +12,22 @@ static unsigned int hash_string(const char* str)
     return hash % HMAP_MAX_ELEMS;
 }
 
+inline void fhashmap_init(fhashmap_t *map) {
+    if(!map) {
+        fprintf(stderr, "fhashmap_init: Failed to access hashmap\n");
+        return;
+    }
+    memset(map->farray, 0, sizeof(map->farray));
+}
+
 
 void fhashmap_add(fhashmap_t *map, const char *const filename, const char *const filehash)   
-{
+{   
+    if(!map) {
+        fprintf(stderr, "fhashmap_add: Failed to access hashmap\n");
+        return;
+    }
+
     unsigned int hash = hash_string(filename);
     
     fhashentry_t *entry = map->farray[hash];
@@ -52,7 +65,11 @@ void fhashmap_add(fhashmap_t *map, const char *const filename, const char *const
 }
 
 char* fhashmap_lookup(fhashmap_t* map, char* filename)
-{
+{   
+    if(!map) {
+        fprintf(stderr, "fhashmap_lookup: Failed to access hashmap\n");
+        return;
+    }
     unsigned int hash = hash_string(filename);
 
     fhashentry_t *entry = map->farray[hash];
@@ -73,7 +90,12 @@ char* fhashmap_lookup(fhashmap_t* map, char* filename)
 }
 
 void fhashmap_print(fhashmap_t *map)    
-{
+{   
+    if(!map) {
+        fprintf(stderr, "fhashmap_print: Failed to access hashmap\n");
+        return;
+    }
+
     for(int i = 0; i < HMAP_MAX_ELEMS; i++) {
 
         fhashentry_t *curr = map->farray[i];

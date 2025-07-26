@@ -4,14 +4,16 @@
 #include "json_helper.h"
 #include "sha-256.h"
 #include <omp.h>
+#include <stdlib.h>
 
 #define DEBUG 0
 
-fhashmap_t curr_fhashmap;
-fhashmap_t prev_fhashmap;
-
 int list_add(filelist_t *list, char *path) 
-{
+{   
+    #if DEBUG
+    printf("Loading %s\n", path);
+    #endif
+
     if (list->len < MAX_FILES) {
         strncpy(list->filenames[list->len],
                 (path), MAX_PATH - 1);
@@ -47,7 +49,7 @@ static inline char *get_hex_string(char hash[32])  {
     return hex;
 }
 
-char *compute_sha256(char full_path[MAX_PATH])
+char *compute_sha256(const char *full_path)
 {   
     struct Sha_256 sha_256;
     char hash[32]; // 32-byte hash
@@ -73,8 +75,8 @@ char *compute_sha256(char full_path[MAX_PATH])
     return hex;
 }
 
-void collect_files_list(const char *dir, filelist_t *list) 
-{
+void collect_files_list(const char *dir, filelist_t *list) {
+#ifdef _WIN32
     char search_path[MAX_PATH];
     snprintf(search_path, MAX_PATH, "%s\\*", dir);
 
@@ -92,11 +94,36 @@ void collect_files_list(const char *dir, filelist_t *list)
         if (findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
             collect_files_list(full_path, list);
         } else {
-            list_add(list, _strdup(full_path));
+            if(list_add(list, _strdup(full_path))) return;
         }
     } while (FindNextFileA(hFind, &findData));
 
     FindClose(hFind);
+
+#else // Linux/macOS
+    DIR *dp = opendir(dir);
+    if (!dp) return;
+
+    struct dirent *entry;
+    while ((entry = readdir(dp)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+            continue;
+
+        char full_path[PATH_MAX];
+        snprintf(full_path, sizeof(full_path), "%s/%s", dir, entry->d_name);
+
+        struct stat path_stat;
+        if (stat(full_path, &path_stat) == -1) continue;
+
+        if (S_ISDIR(path_stat.st_mode)) {
+            collect_files_list(full_path, list);
+        } else {
+            list_add(list, _strdup(full_path));
+        }
+    }
+
+    closedir(dp);
+#endif
 }
 
 int load_files(const filelist_t *const list, fhashmap_t *map)
@@ -105,7 +132,8 @@ int load_files(const filelist_t *const list, fhashmap_t *map)
     
     #pragma omp parallel for schedule(dynamic, 8)
     for(int i = 0; i < list->len; i++)  {
-        char *filename = list->filenames[i];
+        const char *filename = list->filenames[i];
+        // TODO: Check metadata before computing hash
         char *hash = compute_sha256(filename);
         if(!hash) {
             fprintf(stderr, "Couldn't hash %s, skipping\n", filename);
@@ -175,32 +203,51 @@ size_t map_diff(filediff_t *diff, fhashmap_t *curr_map, fhashmap_t *prev_map)
 
     if(diff_count == 0)  {
         printf("No changes to directory.\n");
-        return NULL;
+        return 0;
     }
     
     return diff_count;
 }
 
-void print_diff(filediff_t *diff, size_t diff_count)   
-{
+void print_diff(filediff_t *diff, size_t diff_count) {
+#ifdef _WIN32
     HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
-    printf("Diffs: \n");
-    for(int i = 0; i < diff_count; i++) {
+    CONSOLE_SCREEN_BUFFER_INFO info;
+    if (!GetConsoleScreenBufferInfo(hConsole, &info)) return;
+    WORD default_attr = info.wAttributes;
 
-        CONSOLE_SCREEN_BUFFER_INFO info;
-        if(!GetConsoleScreenBufferInfo(hConsole, &info)) return NULL;
-
-        if(diff[i].status == MODIFIED) { SetConsoleTextAttribute(hConsole, FOREGROUND_GREEN); printf("+\t"); }
-        if(diff[i].status == DELETED)  { SetConsoleTextAttribute(hConsole, FOREGROUND_RED); printf("-\t"); }
+    printf("Diffs:\n");
+    for (size_t i = 0; i < diff_count; i++) {
+        if (diff[i].status == MODIFIED) {
+            SetConsoleTextAttribute(hConsole, FOREGROUND_GREEN);
+            printf("+\t");
+        } else if (diff[i].status == DELETED) {
+            SetConsoleTextAttribute(hConsole, FOREGROUND_RED);
+            printf("-\t");
+        }
 
         printf("%s\n", diff[i].filename);
-
-        SetConsoleTextAttribute(hConsole, info.wAttributes);
+        SetConsoleTextAttribute(hConsole, default_attr); // Reset to previous text attributes
     }
+
+#else // Linux/macOS
+    printf("Diffs:\n");
+    for (size_t i = 0; i < diff_count; i++) {
+        if (diff[i].status == MODIFIED) {
+            printf(FOREGROUND_GREEN "+\t");
+            printf("%s\n" RESET_COLOR, diff[i].filename);
+        } else if (diff[i].status == DELETED) {
+            printf(FOREGROUND_RED "-\t");
+            printf("%s\n" RESET_COLOR, diff[i].filename);
+        }
+
+    }
+#endif
 }
 
 int main(int argc, char **argv)
 {   
+
     if(argc != 2)    {
         printf("Usage: ./usbdiff <directory>\n");
         return 1;
@@ -208,10 +255,16 @@ int main(int argc, char **argv)
     
     char *directory = argv[1];
     
+    fhashmap_t prev_fhashmap;
+    fhashmap_t curr_fhashmap;
+
+    fhashmap_init(&prev_fhashmap);
+    fhashmap_init(&curr_fhashmap);
+
     filelist_t list;
     list.len = 0;
     
-    // Load snapshot of current directory into hashmap
+    // // Load snapshot of current directory into hashmap
     collect_files_list((const char *) directory, &list);
     load_files(&list, &curr_fhashmap);
 
@@ -237,6 +290,11 @@ int main(int argc, char **argv)
     }
 
     size_t diff_count = map_diff(diffs, &curr_fhashmap, &prev_fhashmap);
+    if(diff_count == 0)  {
+        free(diffs);
+        return 0;
+    }
+
     print_diff(diffs, diff_count);
 
     free(diffs);
