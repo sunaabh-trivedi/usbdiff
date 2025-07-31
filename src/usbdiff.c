@@ -6,32 +6,32 @@
 #include <omp.h>
 #include <stdlib.h>
 
-#define DEBUG 0
-
-int list_add(filelist_t *list, char *path) 
+int list_add(filelist_t *list, const char *path, long long size, long long mtime) 
 {   
+
     #if DEBUG
-    printf("Loading %s\n", path);
+    printf("Loading %s with size %lu and mtime %lu\n", path, size, mtime);
     #endif
 
     if (list->len < MAX_FILES) {
-        strncpy(list->filenames[list->len],
-                (path), MAX_PATH - 1);
-        list->filenames[list->len][MAX_PATH-1] = '\0';
+        strncpy(list->files[list->len].filename, path, MAX_PATH - 1);
+        list->files[list->len].filename[MAX_PATH-1] = '\0';
+        list->files[list->len].file_size = size;
+        list->files[list->len].mtime = mtime;
         list->len++;
     } else {
         fprintf(stderr, "filelist_add: MAX_FILES reached\n");
         return 1;
     }
-
     return 0;
 }
+
 
 void list_print(filelist_t *list)
 {   
     printf("List: \n");
     for(int i = 0; i < list->len; i++)  {
-        printf("%s\n", list->filenames[i]);
+        printf("%s\n", list->files[i].filename);
     }
     printf("-------------------\n");
 }
@@ -94,13 +94,20 @@ void collect_files_list(const char *dir, filelist_t *list) {
         if (findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
             collect_files_list(full_path, list);
         } else {
-            if(list_add(list, _strdup(full_path))) return;
+            ULARGE_INTEGER ull;
+            ull.LowPart  = findData.ftLastWriteTime.dwLowDateTime;
+            ull.HighPart = findData.ftLastWriteTime.dwHighDateTime;
+
+            long long mtime = (long long)((ull.QuadPart - 116444736000000000ULL) / 10000000ULL);
+            long long size = ((long long)findData.nFileSizeHigh << 32) | findData.nFileSizeLow;
+
+            list_add(list, full_path, size, mtime);
         }
     } while (FindNextFileA(hFind, &findData));
 
     FindClose(hFind);
 
-#else // Linux/macOS
+#else // POSIX
     DIR *dp = opendir(dir);
     if (!dp) return;
 
@@ -118,7 +125,7 @@ void collect_files_list(const char *dir, filelist_t *list) {
         if (S_ISDIR(path_stat.st_mode)) {
             collect_files_list(full_path, list);
         } else {
-            list_add(list, _strdup(full_path));
+            list_add(list, full_path, (long long)path_stat.st_size, path_stat.st_mtime);
         }
     }
 
@@ -126,14 +133,34 @@ void collect_files_list(const char *dir, filelist_t *list) {
 #endif
 }
 
-int load_files(const filelist_t *const list, fhashmap_t *map)
+// TODO: Fix previous fhashmap not storing hashes correctly!
+
+int load_files(const filelist_t *const list, fhashmap_t *curr_map, fhashmap_t *prev_map)
 {   
-    if(!list || !map) return 1;
+    if(!list || !curr_map || !prev_map) return -1;
     
     #pragma omp parallel for schedule(dynamic, 8)
     for(int i = 0; i < list->len; i++)  {
-        const char *filename = list->filenames[i];
-        // TODO: Check metadata before computing hash
+        file_t *file = &list->files[i];
+
+        const char *filename = file->filename;
+        long long file_size = file->file_size;
+        long long mtime = file->mtime;
+
+        int reuse_hash = 0;
+
+        #pragma omp critical
+        {
+            fhashentry_t *entry = fhashmap_lookup(prev_map, filename);
+
+            if (entry && file_size == entry->file_size && mtime == entry->mtime) {
+                fhashmap_add(curr_map, filename, strdup(entry->filehash), entry->file_size, entry->mtime);
+                reuse_hash = 1;
+            }
+        }
+
+        if (reuse_hash) continue;
+
         char *hash = compute_sha256(filename);
         if(!hash) {
             fprintf(stderr, "Couldn't hash %s, skipping\n", filename);
@@ -141,7 +168,7 @@ int load_files(const filelist_t *const list, fhashmap_t *map)
         }
         
         #pragma omp critical
-        fhashmap_add(map, filename, _strdup(hash));
+        fhashmap_add(curr_map, filename, strdup(hash), file_size, mtime);
 
         free(hash);
     }
@@ -158,17 +185,17 @@ size_t map_diff(filediff_t *diff, fhashmap_t *curr_map, fhashmap_t *prev_map)
 
         while(prev_map_entry)    {
 
-            char *curr_hash = fhashmap_lookup(curr_map, prev_map_entry->filename);
+            fhashentry_t *curr_entry = fhashmap_lookup(curr_map, prev_map_entry->filename);
 
             // File Unchanged
-            if (curr_hash && strcmp(prev_map_entry->filehash, curr_hash) == 0) {
+            if (curr_entry && strcmp(prev_map_entry->filehash, curr_entry->filehash) == 0) {
                 prev_map_entry = prev_map_entry->next;
                 continue;
             }
 
             // File Modified or Deleted
             if (diff_count < MAX_DIFFS) {
-                if (curr_hash) {
+                if (curr_entry) {
                     diff[diff_count].status = MODIFIED;
                 } else {
                     diff[diff_count].status = DELETED;
@@ -186,10 +213,10 @@ size_t map_diff(filediff_t *diff, fhashmap_t *curr_map, fhashmap_t *prev_map)
         fhashentry_t *curr_map_entry = curr_map->farray[i];
         while(curr_map_entry)    {
 
-            char *prev_hash = fhashmap_lookup(prev_map, curr_map_entry->filename);
+            fhashentry_t *prev_entry = fhashmap_lookup(prev_map, curr_map_entry->filename);
 
             if (diff_count < MAX_DIFFS) {
-                if (!prev_hash) {
+                if (!prev_entry) {
                     diff[diff_count].status = MODIFIED;
                     strncpy(diff[diff_count].filename, curr_map_entry->filename, MAX_PATH - 1);
                     diff[diff_count].filename[MAX_PATH - 1] = '\0';
@@ -261,21 +288,25 @@ int main(int argc, char **argv)
     fhashmap_init(&prev_fhashmap);
     fhashmap_init(&curr_fhashmap);
 
+    parse_json(&prev_fhashmap, ".usbdiff.json");
+
     filelist_t list;
     list.len = 0;
     
     // // Load snapshot of current directory into hashmap
     collect_files_list((const char *) directory, &list);
-    load_files(&list, &curr_fhashmap);
+
+    #if DEBUG
+    list_print(&list);
+    #endif
+
+    load_files(&list, &curr_fhashmap, &prev_fhashmap);
 
     #if DEBUG
     printf("Current Hashmap: \n");
     fhashmap_print(&curr_fhashmap);
     printf("-----------------------------------\n");
     #endif
-
-    // Compare with JSON (previous snapshot of directory) to find changes
-    parse_json(&prev_fhashmap, ".usbdiff.json");
 
     #if DEBUG
     printf("Previous Hashmap: \n");
@@ -314,6 +345,9 @@ int main(int argc, char **argv)
     }
     
     print_json(fp, files_object);
+
+    fhashmap_free(&prev_fhashmap);
+    fhashmap_free(&curr_fhashmap);
 
     return 0;
 }

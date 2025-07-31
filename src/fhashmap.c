@@ -1,6 +1,5 @@
 #include "fhashmap.h"
 #include <stdlib.h>
-#include <string.h>
 #include <stdio.h>
 
 static unsigned int hash_string(const char* str) 
@@ -21,7 +20,7 @@ inline void fhashmap_init(fhashmap_t *map) {
 }
 
 
-void fhashmap_add(fhashmap_t *map, const char *const filename, const char *const filehash)   
+void fhashmap_add(fhashmap_t* map, const char *filename, const char *filehash, long long file_size, long long mtime)
 {   
     if(!map) {
         fprintf(stderr, "fhashmap_add: Failed to access hashmap\n");
@@ -39,8 +38,10 @@ void fhashmap_add(fhashmap_t *map, const char *const filename, const char *const
             return;
         }
 
-        entry->filename = filename;
-        entry->filehash = filehash;
+        entry->filename = strdup(filename);
+        entry->filehash = strdup(filehash);
+        entry->file_size = file_size;
+        entry->mtime = mtime;
         entry->next = NULL;
 
         map->farray[hash] = entry;
@@ -56,15 +57,17 @@ void fhashmap_add(fhashmap_t *map, const char *const filename, const char *const
             return;
         }
 
-        new->filename = filename;
-        new->filehash = filehash;
+        new->filename = strdup(filename);
+        new->filehash = strdup(filehash);
+        new->file_size = file_size;
+        new->mtime = mtime;
         new->next = NULL;
 
         curr->next = new;
     }
 }
 
-char* fhashmap_lookup(fhashmap_t* map, char* filename)
+fhashentry_t* fhashmap_lookup(fhashmap_t* map, char* filename)
 {   
     if(!map) {
         fprintf(stderr, "fhashmap_lookup: Failed to access hashmap\n");
@@ -80,7 +83,7 @@ char* fhashmap_lookup(fhashmap_t* map, char* filename)
     fhashentry_t *curr = entry;
     while(curr) {
         if(!strcmp(curr->filename, filename))  {
-            return curr->filehash;
+            return curr;
         }
 
         curr = curr->next;
@@ -104,5 +107,20 @@ void fhashmap_print(fhashmap_t *map)
             printf("Key: %s, Value: %s\n", curr->filename, curr->filehash);
             curr = curr->next;    
         }
+    }
+}
+
+void fhashmap_free(fhashmap_t *map)
+{
+    for(int i = 0; i < HMAP_MAX_ELEMS; ++i) {
+        fhashentry_t *entry = map->farray[i];
+        while(entry) {
+            fhashentry_t *next = entry->next;
+            free((char *)entry->filename); // Cast to non-const if needed
+            free((char *)entry->filehash);
+            free(entry);
+            entry = next;
+        }
+        map->farray[i] = NULL;
     }
 }

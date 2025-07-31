@@ -18,13 +18,21 @@
 #define MAX_DIFFS 1024
 #define MAX_FILES 5192
 
+#define DEBUG 0
+
 typedef struct {
     char filename[MAX_PATH];
     enum { MODIFIED, DELETED } status;
 } filediff_t;
 
+typedef struct  {
+    char filename[MAX_PATH];
+    long long file_size;
+    long long mtime;
+} file_t;
+
 typedef struct {
-    char filenames[MAX_FILES][MAX_PATH];
+    file_t files[MAX_FILES];
     size_t len;
 } filelist_t;
 

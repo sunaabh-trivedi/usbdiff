@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -Wall -O0 -pg -fopenmp
+CFLAGS = -Wall -O0 -g -fopenmp
 
 TARGET = usbdiff
 
