@@ -1,7 +1,6 @@
 #ifndef USBDIFF_H
 #define USBDIFF_H
 
-
 #ifdef _WIN32
 #include <windows.h>
 #else

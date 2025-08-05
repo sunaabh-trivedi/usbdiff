@@ -23,7 +23,7 @@ typedef struct
 } fhashmap_t;
 
 void fhashmap_add(fhashmap_t* map, const char *filename, const char *filehash, long long file_size, long long mtime);
-fhashentry_t* fhashmap_lookup(fhashmap_t* map, char* filename);
+fhashentry_t* fhashmap_lookup(fhashmap_t* map, const char* filename);
 void fhashmap_print(fhashmap_t *map);
 void fhashmap_init(fhashmap_t *map);
 void fhashmap_free(fhashmap_t *map);

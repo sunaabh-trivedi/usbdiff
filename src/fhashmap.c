@@ -67,12 +67,13 @@ void fhashmap_add(fhashmap_t* map, const char *filename, const char *filehash, l
     }
 }
 
-fhashentry_t* fhashmap_lookup(fhashmap_t* map, char* filename)
+fhashentry_t* fhashmap_lookup(fhashmap_t* map, const char* filename)
 {   
     if(!map) {
         fprintf(stderr, "fhashmap_lookup: Failed to access hashmap\n");
-        return;
+        return NULL;
     }
+
     unsigned int hash = hash_string(filename);
 
     fhashentry_t *entry = map->farray[hash];
