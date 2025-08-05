@@ -133,8 +133,6 @@ void collect_files_list(const char *dir, filelist_t *list) {
 #endif
 }
 
-// TODO: Fix previous fhashmap not storing hashes correctly!
-
 int load_files(const filelist_t *const list, fhashmap_t *curr_map, fhashmap_t *prev_map)
 {   
     if(!list || !curr_map || !prev_map) return -1;
@@ -288,7 +286,7 @@ int main(int argc, char **argv)
     fhashmap_init(&prev_fhashmap);
     fhashmap_init(&curr_fhashmap);
 
-    parse_json(&prev_fhashmap, ".usbdiff.json");
+    parse_json_stream(&prev_fhashmap, ".usbdiff.json");
 
     filelist_t list;
     list.len = 0;
