@@ -17,3 +17,6 @@ void parse_json(fhashmap_t *map, const char *infile);
 
 // Print JSON from cJSON object to output  stream (stdout, stderr, any file, etc.)
 void print_json(FILE *out, const cJSON *const object);
+
+// Parse JSON from infile into an internal fhashmap_t map, streaming JSON contents into a buffer
+int parse_json_stream(fhashmap_t *map, const char *infile);

@@ -198,21 +198,21 @@ void parse_json(fhashmap_t *map, const char *infile)
 
     FILE *fp = fopen(infile, "rb");
     if(!fp) {
-        fprintf(stderr, "Failed to open JSON file for parsing\n");
+        fprintf(stderr, "parse_json: Failed to open JSON file for parsing\n");
         return;
     }
 
     size_t nread;
     nread = fread(rdbuf, 1, rdbuf_size, fp);
     if(nread == 0)  {
-        fprintf(stderr, "Failed to read JSON into parsing buffer\n");
+        fprintf(stderr, "parse_json: Failed to read JSON into parsing buffer\n");
         return;
     }
     
     cJSON *object = cJSON_ParseWithLength(rdbuf, nread);
     free(rdbuf);
     if (!object) {
-        fprintf(stderr, "Failed to parse JSON\n");
+        fprintf(stderr, "parse_json: Failed to parse JSON\n");
         return;
     }
 
@@ -371,10 +371,8 @@ cleanup:
     if (merged_object) {
         cJSON_Delete(merged_object);
     }
-    if (sb) {
-        free(sb->buffer);
-        free(sb);
-    }
+    
+    free_stream_buffer(sb);
 
     fclose(fp);
     return success;

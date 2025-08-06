@@ -3,11 +3,14 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#include <direct.h>
+#define PATH_SEP '\\'
 #else
 #include <dirent.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #define MAX_PATH 1024
+#define PATH_SEP '/'
 #define FOREGROUND_RED   "\033[31m"
 #define FOREGROUND_GREEN "\033[32m"
 #define RESET_COLOR      "\033[0m"

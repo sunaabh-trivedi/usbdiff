@@ -75,7 +75,8 @@ char *compute_sha256(const char *full_path)
     return hex;
 }
 
-void collect_files_list(const char *dir, filelist_t *list) {
+void collect_files_list(const char *dir, filelist_t *list) 
+{
 #ifdef _WIN32
     char search_path[MAX_PATH];
     snprintf(search_path, MAX_PATH, "%s\\*", dir);
@@ -101,7 +102,7 @@ void collect_files_list(const char *dir, filelist_t *list) {
             long long mtime = (long long)((ull.QuadPart - 116444736000000000ULL) / 10000000ULL);
             long long size = ((long long)findData.nFileSizeHigh << 32) | findData.nFileSizeLow;
 
-            list_add(list, full_path, size, mtime);
+            if(list_add(list, full_path, size, mtime)) return;
         }
     } while (FindNextFileA(hFind, &findData));
 
@@ -125,7 +126,7 @@ void collect_files_list(const char *dir, filelist_t *list) {
         if (S_ISDIR(path_stat.st_mode)) {
             collect_files_list(full_path, list);
         } else {
-            list_add(list, full_path, (long long)path_stat.st_size, path_stat.st_mtime);
+            if(list_add(list, full_path, (long long)path_stat.st_size, path_stat.st_mtime)) return;
         }
     }
 
@@ -270,15 +271,150 @@ void print_diff(filediff_t *diff, size_t diff_count) {
 #endif
 }
 
-int main(int argc, char **argv)
-{   
+void ensure_directory_exists(const char *path) 
+{
+    char tmp[PATH_MAX];
+    snprintf(tmp, PATH_MAX, "%s", path);
 
-    if(argc != 2)    {
-        printf("Usage: ./usbdiff <directory>\n");
-        return 1;
+    for (char *p = tmp + 1; *p; p++) {
+        if (*p == '/' || *p == '\\') {
+            char c = *p;
+            *p = '\0';
+
+#ifdef _WIN32
+            _mkdir(tmp); // Windows
+#else
+            mkdir(tmp, 0755); // POSIX
+#endif
+            *p = c;
+        }
+    }
+
+#ifdef _WIN32
+    _mkdir(tmp);
+#else
+    mkdir(tmp, 0755);
+#endif
+}
+
+int copy_file(const char *src, const char *dst) 
+{
+    FILE *in = fopen(src, "rb");
+    if (!in) {
+        fprintf(stderr, "Failed to open source file: %s\n", src);
+        return -1;
+    }
+
+    // Ensure parent directory of dst exists
+    char dst_parent[PATH_MAX];
+    snprintf(dst_parent, sizeof(dst_parent), "%s", dst);
+    
+    char *last_sep = strrchr(dst_parent, '/');
+#ifdef _WIN32
+    char *last_backslash = strrchr(dst_parent, '\\');
+    if (last_backslash && (!last_sep || last_backslash > last_sep)) {
+        last_sep = last_backslash;
+    }
+#endif
+    
+    if (last_sep) {
+        *last_sep = '\0';
+        ensure_directory_exists(dst_parent);
+    }
+
+    FILE *out = fopen(dst, "wb");
+    if (!out) {
+        fprintf(stderr, "copy_file: Failed to create destination file: %s\n", dst);
+        fclose(in);
+        return -1;
+    }
+
+    char buf[8192];
+    size_t n;
+    while ((n = fread(buf, 1, sizeof(buf), in)) > 0) {
+        if (fwrite(buf, 1, n, out) != n) {
+            fprintf(stderr, "copy_file: Failed to write to destination file: %s\n", dst);
+            fclose(in); 
+            fclose(out);
+            return -1;
+        }
+    }
+
+    fclose(in);
+    fclose(out);
+    return 0;
+}
+
+const char *make_relative_path(const char *full_path, const char *base_path) 
+{
+    size_t base_len = strlen(base_path);
+    
+    // Ensure base_path ends with separator for proper comparison
+    char normalized_base[PATH_MAX];
+    snprintf(normalized_base, sizeof(normalized_base), "%s", base_path);
+    
+    // Add trailing separator if not present
+    if (base_len > 0 && normalized_base[base_len-1] != '/' && normalized_base[base_len-1] != '\\') {
+#ifdef _WIN32
+        strncat(normalized_base, "\\", PATH_MAX - base_len - 1);
+#else
+        strncat(normalized_base, "/", PATH_MAX - base_len - 1);
+#endif
+        base_len++;
     }
     
-    char *directory = argv[1];
+#ifdef _WIN32
+    // Case-insensitive match on Windows
+    if (_strnicmp(full_path, normalized_base, base_len) == 0) {
+#else
+    if (strncmp(full_path, normalized_base, base_len) == 0) {
+#endif
+        return full_path + base_len;
+    }
+    
+    // If no match, try without the trailing separator
+    base_len = strlen(base_path);
+#ifdef _WIN32
+    if (_strnicmp(full_path, base_path, base_len) == 0) {
+#else
+    if (strncmp(full_path, base_path, base_len) == 0) {
+#endif
+        const char *rel = full_path + base_len;
+        if (*rel == '\\' || *rel == '/') rel++;
+        return rel;
+    }
+    
+    return full_path; // fallback
+}
+
+int main(int argc, char **argv)
+{   
+    char *copy_to_dir = NULL;
+    char *directory = NULL;
+
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--copy-to") == 0 && i + 1 < argc) {
+            copy_to_dir = argv[++i];
+        } else if (argv[i][0] != '-') {
+            directory = argv[i];
+        }
+    }
+
+    if (!directory) {
+        printf("Usage: ./usbdiff [--copy-to <dir>] <directory>\n");
+        return 1;
+    }
+
+    // If JSON doesn't exist, create one
+    FILE *fp = fopen(".usbdiff.json", "r");
+    if(!fp) {
+        FILE *new_fp = fopen(".usbdiff.json", "w");
+        if(!new_fp) {
+            fprintf(stderr, "Failed to create .usbdiff.json\n");
+            return -1;
+        } else fclose(new_fp);
+
+    }   else fclose(fp);
     
     fhashmap_t prev_fhashmap;
     fhashmap_t curr_fhashmap;
@@ -300,6 +436,8 @@ int main(int argc, char **argv)
 
     load_files(&list, &curr_fhashmap, &prev_fhashmap);
 
+    printf("Scanned %i files\n", list.len);
+
     #if DEBUG
     printf("Current Hashmap: \n");
     fhashmap_print(&curr_fhashmap);
@@ -315,16 +453,47 @@ int main(int argc, char **argv)
     // Compare prev and curr hashmaps
     filediff_t *diffs = malloc(sizeof(filediff_t)*MAX_DIFFS);
     if(!diffs)  {
-        return 0;
+        fprintf(stderr, "Failed to allocate memory for diffs\n");
+        fhashmap_free(&prev_fhashmap);
+        fhashmap_free(&curr_fhashmap);
+        return 1;
     }
 
     size_t diff_count = map_diff(diffs, &curr_fhashmap, &prev_fhashmap);
     if(diff_count == 0)  {
         free(diffs);
+        fhashmap_free(&prev_fhashmap);
+        fhashmap_free(&curr_fhashmap);
         return 0;
     }
 
     print_diff(diffs, diff_count);
+
+    if(copy_to_dir) {
+        printf("\nCopying modified files to: %s\n", copy_to_dir);
+        
+        for(size_t i = 0; i < diff_count; i++) {
+            if(diffs[i].status != MODIFIED) continue;
+
+            const char *rel_path = make_relative_path(diffs[i].filename, directory);
+
+            char dst_path[PATH_MAX];
+            snprintf(dst_path, sizeof(dst_path), "%s%c%s", copy_to_dir, 
+#ifdef _WIN32
+                     '\\',
+#else
+                     '/',
+#endif
+                     rel_path);
+
+            if(copy_file(diffs[i].filename, dst_path) != 0)   {
+                fprintf(stderr, "Failed to copy %s to %s\n", diffs[i].filename, dst_path);
+            }
+            else {
+                printf("Copied: %s -> %s\n", rel_path, dst_path);
+            }
+        }
+    }
 
     free(diffs);
 
@@ -332,18 +501,26 @@ int main(int argc, char **argv)
     cJSON *files_object = create_json(&curr_fhashmap);
     if(!files_object)   {
         fprintf(stderr, "Failed to create cJSON object\n");
-        return -1;
+        fhashmap_free(&prev_fhashmap);
+        fhashmap_free(&curr_fhashmap);
+        return 1;
     }
 
     const char *outfile = ".usbdiff.json";
-    FILE *fp = fopen(outfile, "w");
+    fp = fopen(outfile, "w");
 
     if(!fp) {
         fprintf(stderr, "Failed to write to JSON output file\n");
+        cJSON_Delete(files_object);
+        fhashmap_free(&prev_fhashmap);
+        fhashmap_free(&curr_fhashmap);
+        return 1;
     }
     
     print_json(fp, files_object);
-
+    fclose(fp);
+    
+    cJSON_Delete(files_object);
     fhashmap_free(&prev_fhashmap);
     fhashmap_free(&curr_fhashmap);
 
